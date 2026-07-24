@@ -1,0 +1,120 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Libraries
+```{r}
+library(tidyverse)
+library(emmeans)
+library(lme4)
+library(lmerTest)
+library(rptR)
+```
+
+Data
+```{r}
+
+data_spin_trials <- read.csv("Data.csv")
+
+#activity variable
+data_spin_trials$total_turn <- data_spin_trials$left_turn + data_spin_trials$right_turn 
+
+#filters
+data_spin_trials <- data_spin_trials %>% filter(total_turn > 3)
+data_spin_trials <- data_spin_trials[!(data_spin_trials$right_turn == 0 & data_spin_trials$left_turn == 0), ]
+
+#Calculate raw directional laterality 
+data_spin_trials$lat_count <- data_spin_trials$right_turn - data_spin_trials$left_turn
+#calculate rawabsolute laterality 
+data_spin_trials$abs_lat <- abs(data_spin_trials$lat_count)
+
+#create male and female dfs
+male1 <- data_spin_trials %>% filter(sex == "m")
+female1 <- data_spin_trials %>% filter(sex == "f")
+
+```
+
+(Repeatablility) Is behavior repeatable?
+```{r}
+
+# Calculate repeatability
+repeatability <- rpt(lat_count ~ sex + (1 | id_number), grname = "id_number", data = data_spin_trials, datatype = "Gaussian")
+summary(repeatability)
+
+```
+
+(Absolute laterality) Do all groups show lateralized behavior?
+```{r}
+
+### Linear Mixed Model ###
+
+# final model
+m1 <- lmer(abs_lat ~ sex + environment + (1|pop_code) + (1|id_number), data = data_spin_trials)
+summary(m1)
+
+```
+
+(Absolute Laterality) Plot
+```{r}
+
+#plot
+ggplot() +
+  geom_boxplot(
+    data = data_spin_trials,
+    aes(y = class, x = abs_lat, fill = environment), alpha = 0.3, color = "#636363") +
+  scale_fill_manual(values = c("l" = "darkblue", "r" = "darkred", "m" = "grey")) +
+  theme_classic() +
+  labs(x = NULL, y = NULL, title = NULL)
+
+```
+
+(Directional laterality) Do all groups show lateralized behavior in the same direcion?
+```{r}
+### Generalized Linear Mixed Models ###
+
+#MALES
+#final model
+m2 <- glmer(cbind(left_turn, right_turn) ~ environment + morph + (1|pop_code) + (1|id_number), data = male1, family = binomial)
+summary(m2)
+
+#FEMALES
+#final model
+m3 <- glmer(cbind(left_turn, right_turn) ~ environment + (1|pop_code) + (1|id_number), data = female1, family = binomial)
+summary(m3)
+
+### T-tests ###
+ind_means <- data_spin_trials %>%
+  group_by(id_number) %>%
+  summarise(
+    environment = first(environment),
+    class = first(class),
+    meanlat = mean(lat_count, na.rm = TRUE),
+    .groups = "drop" )
+
+
+results1 <- ind_means %>%
+  group_by(class) %>%
+  summarise(t_test = list(t.test(meanlat, mu = 0, conf.level = 0.95)), .groups = "drop") %>%
+  mutate(tidy_result = purrr::map(t_test, broom::tidy)) %>%
+  tidyr::unnest(tidy_result) %>%
+  mutate(significant = p.value < 0.05)
+
+print(results1)
+
+```
+
+(Directional Laterality) Plot
+```{r}
+
+ggplot() +
+  geom_boxplot(data = data_spin_trials, aes(y = class, x = lat_count, fill = environment), alpha = 0.2, color = "#636363", width = 0.9) +
+  geom_point(data = results1, aes(y = class, x = estimate), size = 3.5) +
+  geom_errorbarh(data = results1, aes(y = class, xmin = conf.low, xmax = conf.high), height = 0, linewidth = 1.1) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = c("l" = "darkblue","r" = "darkred","m" = "grey")) +
+  theme_classic() +
+  labs(x = NULL, y = NULL, title = NULL)
+
+```
+
+
