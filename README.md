@@ -2,7 +2,7 @@
 
 This repository contains the data and R code used for the analyses presented in:
 
-**"Sex-specific origins of behavioral laterality in the livebearing fish, *Xenophallus umbratilis* (Poeciliidae)"**
+**"Sex-specific patterns of behavioral laterality in the livebearing fish, *Xenophallus umbratilis* (Poeciliidae)"**
 
 The repository provides the dataset and R Markdown workflow necessary to reproduce the statistical analyses and figures reported in the manuscript.
 
@@ -62,7 +62,7 @@ The dataset provided here contains the processed data used in the manuscript ana
 If you use these data or code, please cite:
 
 Johnson, E. et al.  
-*"Sex-specific origins of behavioral laterality in the livebearing fish, Xenophallus umbratilis (Poeciliidae)."*
+*"Sex-specific patterns of behavioral laterality in the livebearing fish, Xenophallus umbratilis (Poeciliidae)."*
 
 ---
 
