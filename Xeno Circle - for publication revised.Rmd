@@ -1,0 +1,490 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Libraries
+```{r}
+library(car)
+library(tidyverse)
+library(emmeans)
+library(lme4)
+library(lmerTest)
+library(rptR)
+library(writexl)
+options(contrasts = c("contr.sum", "contr.poly"))
+```
+
+Data
+```{r}
+# Read in data
+data_spin_trials <- read.csv("Data.csv")
+
+# Add variables and filters
+
+# Add trial number
+data_spin_trials <- data_spin_trials %>%
+  group_by(id_number) %>%
+  mutate(trial = row_number()) %>%
+  ungroup() %>%
+  mutate(trial = factor(trial))
+
+# Add activity variable
+data_spin_trials$total_turn <- data_spin_trials$left_turn + data_spin_trials$right_turn 
+
+# Add fix_mix variable
+data_spin_trials$fix_mix <- ifelse(data_spin_trials$environment %in% c("l", "r"), "fixed", ifelse(data_spin_trials$environment == "m", "mixed", NA))
+
+# Filter turn_total >=3
+data_spin_trials <- data_spin_trials %>% filter(total_turn >= 3)
+
+# Calculate raw directional and absolute laterality 
+data_spin_trials$lat_count <- data_spin_trials$right_turn - data_spin_trials$left_turn
+data_spin_trials$abs_lat <- abs(data_spin_trials$lat_count)
+
+# Calculate laterality adjusted for the total number of revolutions
+data_spin_trials$lat_prop <- data_spin_trials$lat_count / data_spin_trials$total_turn
+data_spin_trials$abs_lat_prop <- abs(data_spin_trials$lat_prop)
+
+# Save data with new variables
+write_xlsx(data_spin_trials, "data_spin_trials.xlsx")
+
+#create male and female dfs
+male1 <- data_spin_trials %>% filter(sex == "m")
+female1 <- data_spin_trials %>% filter(sex == "f")
+
+# Number of trials (post-filter) by morph, environment, and sex
+trial_counts <- data_spin_trials %>%
+  count(morph, environment, sex) %>%
+  tidyr::pivot_wider(
+    names_from = sex,
+    values_from = n,
+    values_fill = 0,
+    names_prefix = "n_"
+  ) %>%
+  arrange(morph, environment)
+
+print(trial_counts)
+
+sum(data_spin_trials %>% count(morph, environment, sex) %>% pull(n))
+```
+
+(Repeatablility) Is behavior repeatable?
+```{r}
+# Filter only individuals with two trials represented
+data_spin_trials_paired <- data_spin_trials %>%
+  group_by(id_number) %>%
+  filter(n() == 2) %>%
+  ungroup()
+
+# Calculate repeatability for directional laterality
+repeatability <- rpt(lat_count ~ sex + trial + (1 | id_number), grname = "id_number", data = data_spin_trials_paired, datatype = "Gaussian")
+summary(repeatability)
+
+# Calculate repeatability for absolute laterality
+repeatabilityb <- rpt(abs_lat ~ sex + trial + (1 | id_number), grname = "id_number", data = data_spin_trials_paired, datatype = "Gaussian")
+summary(repeatabilityb)
+
+# Repeatability after accounting for total revolutions
+repeatability_prop <- rpt(lat_prop ~ sex + trial + (1 | id_number), grname = "id_number", data = data_spin_trials_paired, datatype = "Gaussian")
+summary(repeatability_prop) ## MODEL REFERENCED IN MS
+
+repeatabilityb_prop <- rpt(abs_lat_prop ~ sex + trial + (1 | id_number), grname = "id_number", data = data_spin_trials_paired, datatype = "Gaussian")
+summary(repeatabilityb_prop) ## MODEL REFERENCED IN MS
+
+```
+
+(Absolute laterality) Do all groups show lateralized behavior?
+```{r}
+
+### Linear Mixed Models ###
+
+# m1.
+abs_m1 <- lmer(abs_lat ~ sex + environment + trial + (1|id_number), data = data_spin_trials)
+summary(abs_m1)
+anova(abs_m1, type = 3) 
+
+# m2. We test for an interaction.
+abs_m2 <- lmer(abs_lat ~ sex * fix_mix + trial + (1|id_number), data = data_spin_trials)
+summary(abs_m2)
+anova(abs_m2, type = 3)
+
+# m3. Using the total-adjusted measures
+abs_m3 <- lmer(abs_lat_prop ~ sex + environment + trial + (1|id_number), data = data_spin_trials)
+summary(abs_m3)
+anova(abs_m3, type = 3) ## MODEL REFERENCED IN SUPLIMENTARY MATERIAL
+
+# m2. We test for an interaction. 
+abs_m4 <- lmer(abs_lat_prop ~ sex * fix_mix + trial + (1|id_number), data = data_spin_trials)
+summary(abs_m4)
+anova(abs_m4, type = 3) ## MODEL REFERENCED IN MS
+
+```
+
+(Absolute Laterality) Simple plots
+```{r}
+
+# CIs from abs_m3
+abs_m3_emm <- emmeans(abs_m3, ~ environment * sex) %>% as.data.frame()
+
+plot_abs_m3 <- ggplot() +
+  # Raw trial-level observations
+  geom_point(data = data_spin_trials, aes(x = environment,y = abs_lat_prop, color = sex, group = sex),
+    position = position_jitterdodge(jitter.width = 0.12, jitter.height = 0, dodge.width = 0.4), alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = abs_m3_emm, aes( x = environment, ymin = lower.CL, ymax = upper.CL, color = sex, group = sex),
+    position = position_dodge(width = 0.4), width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = abs_m3_emm, aes(x = environment, y = emmean, color = sex, shape = sex, group = sex),
+    position = position_dodge(width = 0.4), size = 3.5 ) +
+  coord_flip(ylim = c(0, 1))+
+  theme_classic() +
+  labs(x = "Environment", y = "Absolute laterality", color = "Sex", shape = "Sex")
+
+plot_abs_m3
+
+
+# CIs from abs_m4
+abs_m4_emm <- emmeans(abs_m4, ~ fix_mix * sex) %>% as.data.frame()
+
+plot_abs_m4 <- ggplot() +
+  
+  # Raw trial-level observations
+  geom_point(data = data_spin_trials, aes(x = fix_mix, y = abs_lat_prop, color = sex, group = sex),
+             position = position_jitterdodge(jitter.width = 0.12, jitter.height = 0, dodge.width = 0.4),
+             alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = abs_m4_emm, aes(x = fix_mix, ymin = lower.CL, ymax = upper.CL, color = sex, group = sex),
+                position = position_dodge(width = 0.4), width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = abs_m4_emm, aes(x = fix_mix, y = emmean, color = sex, shape = sex, group = sex),
+             position = position_dodge(width = 0.4), size = 3.5) +
+  coord_flip(ylim = c(0, 1)) +
+  theme_classic() +
+  labs(x = "Environment composition", y = "Absolute laterality", color = "Sex", shape = "Sex")
+
+plot_abs_m4
+
+```
+
+(Directional laterality for MALES) Do all groups show lateralized behavior in the same direcion?
+```{r}
+### Generalized Linear Mixed Models ###
+
+# m1. environment and morph
+dir_m1 <- glmer(cbind(right_turn, left_turn) ~ environment + morph + trial + (1|id_number), data = male1, family = binomial)
+summary(dir_m1)
+Anova(dir_m1, type=3) ## MODEL REFERENCED IN SUPLIMENTARY MATERIAL
+isSingular(dir_m1)
+VarCorr(dir_m1)
+
+observed_male_cells <- male1 %>% distinct(environment, morph)
+
+dir_m1_emm <- emmeans(dir_m1, ~ environment * morph, type = "response") %>%
+  as.data.frame() %>%
+  inner_join(observed_male_cells, by = c("environment", "morph")) %>%
+  mutate(emmean = 2 * prob - 1,
+         lower.CL = 2 * asymp.LCL - 1,
+         upper.CL = 2 * asymp.UCL - 1)
+
+# Simple plot
+plot_dir_m1 <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  # Raw trial-level observations
+  geom_point(data = male1, aes(x = environment, y = lat_prop, color = morph, group = morph),
+             position = position_jitterdodge(jitter.width = 0.12, jitter.height = 0, dodge.width = 0.4),
+             alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = dir_m1_emm,
+                aes(x = environment, ymin = lower.CL, ymax = upper.CL, color = morph, group = morph),
+                position = position_dodge(width = 0.4), width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = dir_m1_emm,
+             aes(x = environment, y = emmean, color = morph, group = morph),
+             position = position_dodge(width = 0.4), size = 3.5) +
+  coord_flip(ylim = c(-1, 1)) +
+  theme_classic() +
+  labs(x = "Environment composition", y = "Directional laterality", color = "Morph")
+
+plot(plot_dir_m1)
+
+
+# m2. fix_mix and morph
+dir_m2 <- glmer(cbind(right_turn, left_turn) ~ fix_mix * morph + trial + (1|id_number), data = male1, family = binomial)
+summary(dir_m2)
+Anova(dir_m2, type=3) ## MODEL REFERENCED IN MS
+isSingular(dir_m2)
+VarCorr(dir_m2)
+
+dir_m2_emm <- emmeans(dir_m2, ~ fix_mix * morph, type = "response") %>%
+  as.data.frame() %>%
+  mutate(emmean = 2 * prob - 1,
+         lower.CL = 2 * asymp.LCL - 1,
+         upper.CL = 2 * asymp.UCL - 1)
+
+# Simple plot
+plot_dir_m2 <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  # Raw trial-level observations
+  geom_point(data = male1, aes(x = fix_mix, y = lat_prop, color = morph, group = morph),
+             position = position_jitterdodge(jitter.width = 0.12, jitter.height = 0, dodge.width = 0.4),
+             alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = dir_m2_emm,
+                aes(x = fix_mix, ymin = lower.CL, ymax = upper.CL, color = morph, group = morph),
+                position = position_dodge(width = 0.4), width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = dir_m2_emm,
+             aes(x = fix_mix, y = emmean, color = morph, group = morph),
+             position = position_dodge(width = 0.4), size = 3.5) +
+  coord_flip(ylim = c(-1, 1)) +
+  theme_classic() +
+  labs(x = "Environment composition", y = "Directional laterality", color = "Morph")
+
+plot(plot_dir_m2)
+
+```
+
+(Directional laterality for FEMALES) Do all groups show lateralized behavior in the same direcion?
+```{r}
+### Generalized Linear Mixed Models ###
+
+# f1. environment (3 level)
+dir_f1 <- glmer(cbind(right_turn, left_turn) ~ environment + trial + (1 | id_number), data = female1, family = binomial)
+summary(dir_f1) 
+Anova(dir_f1, type = 3) ## MODEL REFERENCED IN MS
+isSingular(dir_f1)
+VarCorr(dir_f1)
+
+# Pairwise environment comparisons following significant omnibus test
+dir_f1_emm <- emmeans(dir_f1, ~ environment, type = "response")
+pairs(dir_f1_emm, adjust = "tukey")
+
+# Simple plot
+dir_f1_emm <- emmeans(dir_f1, ~ environment, type = "response") %>%
+  as.data.frame() %>%
+  mutate(
+    emmean = 2 * prob - 1,
+    lower.CL = 2 * asymp.LCL - 1,
+    upper.CL = 2 * asymp.UCL - 1
+)
+
+plot_dir_f1 <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  # Raw trial-level observations
+  geom_point(data = female1, aes(x = environment, y = lat_prop, color = environment),
+             position = position_jitter(width = 0.12, height = 0),
+             alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = dir_f1_emm,
+                aes(x = environment, ymin = lower.CL, ymax = upper.CL, color = environment),
+                width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = dir_f1_emm,
+             aes(x = environment, y = emmean, color = environment),
+             size = 3.5) +
+  coord_flip(ylim = c(-1, 1)) +
+  theme_classic() +
+  labs(x = "Environment", y = "Directional laterality", color = "Environment")
+
+plot_dir_f1
+
+
+# f2. fix_mix (2 level)
+dir_f2 <- glmer(cbind(left_turn, right_turn) ~ fix_mix + trial + (1|id_number), data = female1, family = binomial)
+summary(dir_f2)
+Anova(dir_f2, type = 3)
+isSingular(dir_f2)
+VarCorr(dir_f2)
+
+# Simple plot
+dir_f2_emm <- emmeans(dir_f2, ~ fix_mix, type = "response") %>%
+  as.data.frame() %>%
+  mutate(emmean = 2 * prob - 1,
+         lower.CL = 2 * asymp.LCL - 1,
+         upper.CL = 2 * asymp.UCL - 1)
+
+plot_dir_f2 <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  # Raw trial-level observations
+  geom_point(data = female1,
+             aes(x = fix_mix, y = lat_prop, color = fix_mix),
+             position = position_jitter(width = 0.12, height = 0),
+             alpha = 0.3, size = 1.5) +
+  # Model-estimated 95% confidence intervals
+  geom_errorbar(data = dir_f2_emm,
+                aes(x = fix_mix, ymin = lower.CL, ymax = upper.CL, color = fix_mix),
+                width = 0.08, linewidth = 0.9) +
+  # Model-estimated marginal means
+  geom_point(data = dir_f2_emm,
+             aes(x = fix_mix, y = emmean, color = fix_mix),
+             size = 3.5) +
+  coord_flip(ylim = c(-1, 1)) +
+  theme_classic() +
+  labs(x = "Environment composition", y = "Directional laterality", color = "Environment composition")
+
+plot_dir_f2
+
+```
+
+(Directional laterality) Do all groups show lateralized behavior in either direction?
+```{r}
+### T-tests ###
+
+# Average trial values for each individual
+ind_means <- data_spin_trials %>%
+  group_by(id_number) %>%
+  summarise(
+    environment = first(environment),
+    class = first(class),
+    meanlat = mean(lat_prop, na.rm = TRUE),
+    .groups = "drop" )
+
+# T-Tests with holm correction
+results1 <- ind_means %>%
+  group_by(class) %>%
+  summarise(t_test = list(t.test(
+    meanlat, mu = 0, conf.level = 0.95
+  )), .groups = "drop") %>%
+  mutate(tidy_result = purrr::map(t_test, broom::tidy)) %>%
+  tidyr::unnest(tidy_result) %>%
+  mutate(p_adjusted = p.adjust(p.value, method = "holm"),
+         significant = p_adjusted < 0.05)
+
+print(results1)
+
+#results1_export <- results1 %>% select(-t_test)
+#write_xlsx(results1_export, "results1.xlsx")
+```
+
+(Directional Laterality) Final plot
+```{r}
+class_order <- c("ml_f", "ml_m", "mr_f", "mr_m", "f_l", "f_r", "f_m")
+
+combined_emm <- bind_rows(
+  dir_m2_emm %>% mutate(Sex = "Males"),   
+  dir_f1_emm %>% mutate(Sex = "Females")   
+) %>%
+  mutate(
+    Sex = factor(Sex, levels = c("Males", "Females")),
+    class = case_when(
+      Sex == "Females" ~ paste0("f_", environment),                       # f_l, f_r, f_m
+      Sex == "Males"   ~ paste0("m", morph, "_", substr(fix_mix, 1, 1))   # ml_f, ml_m, mr_f, mr_m
+    ),
+    class = factor(class, levels = rev(class_order))
+  )
+
+data_plot <- data_spin_trials %>%
+  mutate(class = factor(class, levels = rev(class_order)))
+
+# Final plot
+ggplot() +
+  
+  geom_boxplot(
+    data = data_plot,
+    aes(y = class, x = lat_prop, fill = environment),
+alpha = 0.2, color = "#636363") +
+  
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed") +
+  
+  geom_errorbarh(
+    data = combined_emm,
+    aes(
+      y = class,
+      xmin = lower.CL,
+      xmax = upper.CL),
+    height = 0,
+    linewidth = 1.2) +
+    
+  geom_point(
+    data = combined_emm,
+    aes(y = class, x = emmean),
+    size = 3.5) +
+  
+  scale_color_manual(
+    values = c(
+      l = "darkblue",
+      r = "darkred",
+      m = "black")) +
+  
+    scale_fill_manual(
+    values = c(
+      l = "darkblue",
+      r = "darkred",
+      m = "lightgrey")) +
+  
+  scale_y_discrete(
+    labels = c(
+      ml_f = "Male l / Fixed",
+      ml_m = "Male l / Mixed",
+      mr_f = "Male r / Fixed",
+      mr_m = "Male r / Mixed",
+      f_l = "Female / l",
+      f_r = "Female / r",
+      f_m = "Female / m")) +
+  theme_classic() +
+  labs(
+    x = "Laterality proportion",
+    y = NULL ) + 
+  theme(legend.position = "none")
+
+```
+
+(Absolute Laterality) Final plot
+```{r}
+fms_levels <- c("f_f", "f_m", "m_f", "m_m")
+
+add_fix_mix_sex <- function(df) {
+  df %>%
+    mutate(fix_mix_sex = factor(paste(sex, substr(fix_mix, 1, 1), sep = "_"),
+                                levels = fms_levels))
+}
+
+data_spin_trials <- add_fix_mix_sex(data_spin_trials)
+abs_m4_emm       <- add_fix_mix_sex(abs_m4_emm)
+
+# Final plot
+ggplot() +
+  geom_boxplot(
+    data = data_spin_trials,
+    aes(
+      y = fix_mix_sex,
+      x = abs_lat_prop,
+      fill = fix_mix
+    ),
+    alpha = 0.2,
+    color = "#636363"
+  ) +
+  geom_errorbarh(
+    data = abs_m4_emm,
+    aes(
+      y = fix_mix_sex,
+      xmin = lower.CL,
+      xmax = upper.CL
+    ),
+    height = 0,
+    linewidth = 1.2
+  ) +
+  geom_point(
+    data = abs_m4_emm,
+    aes(
+      y = fix_mix_sex,
+      x = emmean
+    ),
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c(
+      fixed = "black",
+      mixed = "lightgrey"
+    )
+  ) +
+  theme_classic() +
+  labs(
+    x = "Absolute laterality",
+    y = NULL
+  ) +
+  theme(legend.position = "none")
+```
+
